@@ -753,14 +753,23 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
         });
 
         function handleImageFile(file) {
+            console.log('📁 [IMAGE] Loading file:', file.name);
+            console.log('📁 [IMAGE] File type:', file.type);
+            console.log('📁 [IMAGE] File size:', (file.size / 1024).toFixed(1), 'KB');
+
             currentImageSize = file.size;
             const reader = new FileReader();
             reader.onload = (e) => {
                 currentImageBase64 = e.target.result;
+                console.log('✅ [IMAGE] File loaded successfully');
+                console.log('📁 [IMAGE] Base64 length:', currentImageBase64.length, 'characters');
                 imagePreview.src = currentImageBase64;
                 previewContainer.classList.add('show');
                 imageInfo.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
                 updateButtonState();
+            };
+            reader.onerror = (e) => {
+                console.error('❌ [IMAGE] Error loading file:', e);
             };
             reader.readAsDataURL(file);
         }
@@ -787,10 +796,16 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
         analyzeBtn.addEventListener('click', analyzeImage);
 
         async function analyzeImage() {
+            console.log('🚀 [ANALYZE] Starting analysis...');
             const apiKey = apiTokenInput.value.trim();
             const selectedModels = getSelectedModels();
 
+            console.log('🔑 [ANALYZE] API Key provided:', apiKey ? `${apiKey.substring(0, 7)}...${apiKey.substring(apiKey.length - 4)}` : 'NONE');
+            console.log('📋 [ANALYZE] Selected models:', selectedModels);
+            console.log('🖼️ [ANALYZE] Image loaded:', !!currentImageBase64);
+
             if (!apiKey || !currentImageBase64 || selectedModels.length === 0) {
+                console.warn('⚠️ [ANALYZE] Missing required data - aborting');
                 return;
             }
 
@@ -806,10 +821,22 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
                 resultsGrid.appendChild(card);
             });
 
+            console.log('📡 [ANALYZE] Sending requests to', selectedModels.length, 'models in parallel...');
+            console.time('Total Analysis Time');
+
             // Run all API calls in parallel
             const results = await Promise.all(
                 selectedModels.map(modelId => callOpenAI(modelId, apiKey))
             );
+
+            console.timeEnd('Total Analysis Time');
+            console.log('✅ [ANALYZE] All requests completed');
+            console.log('📊 [ANALYZE] Results summary:', results.map(r => ({
+                model: r.modelId,
+                success: r.success,
+                duration: r.duration?.toFixed(2) + 's',
+                error: r.error || null
+            })));
 
             // Update cards with results
             results.forEach((result, index) => {
@@ -858,70 +885,103 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
             const model = MODELS[modelId];
             const startTime = performance.now();
 
+            console.log(`🔄 [${modelId}] Starting API request...`);
+            console.log(`🔄 [${modelId}] Model config:`, model);
+
             try {
+                const requestBody = {
+                    model: modelId,
+                    messages: [
+                        {
+                            role: 'user',
+                            content: [
+                                {
+                                    type: 'text',
+                                    text: ROCK_IDENTIFICATION_PROMPT
+                                },
+                                {
+                                    type: 'image_url',
+                                    image_url: {
+                                        url: currentImageBase64,
+                                        detail: 'high'
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens: 1000
+                };
+
+                console.log(`📤 [${modelId}] Request payload size:`, JSON.stringify(requestBody).length, 'bytes');
+                console.log(`📤 [${modelId}] Sending to: https://api.openai.com/v1/chat/completions`);
+                console.time(`[${modelId}] API Response Time`);
+
                 const response = await fetch('https://api.openai.com/v1/chat/completions', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${apiKey}`
                     },
-                    body: JSON.stringify({
-                        model: modelId,
-                        messages: [
-                            {
-                                role: 'user',
-                                content: [
-                                    {
-                                        type: 'text',
-                                        text: ROCK_IDENTIFICATION_PROMPT
-                                    },
-                                    {
-                                        type: 'image_url',
-                                        image_url: {
-                                            url: currentImageBase64,
-                                            detail: 'high'
-                                        }
-                                    }
-                                ]
-                            }
-                        ],
-                        max_tokens: 1000
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
+                console.timeEnd(`[${modelId}] API Response Time`);
                 const endTime = performance.now();
                 const duration = (endTime - startTime) / 1000;
 
+                console.log(`📥 [${modelId}] Response status:`, response.status, response.statusText);
+                console.log(`📥 [${modelId}] Response headers:`, Object.fromEntries(response.headers.entries()));
+
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error?.message || 'API request failed');
+                    const errorText = await response.text();
+                    console.error(`❌ [${modelId}] Error response body:`, errorText);
+                    let error;
+                    try {
+                        error = JSON.parse(errorText);
+                    } catch (e) {
+                        error = { error: { message: errorText } };
+                    }
+                    throw new Error(error.error?.message || `API request failed with status ${response.status}`);
                 }
 
                 const data = await response.json();
+                console.log(`✅ [${modelId}] Success! Response data:`, data);
+
                 const usage = data.usage || {};
                 const inputTokens = usage.prompt_tokens || 0;
                 const outputTokens = usage.completion_tokens || 0;
                 const totalTokens = inputTokens + outputTokens;
+
+                console.log(`📊 [${modelId}] Token usage:`, { inputTokens, outputTokens, totalTokens });
 
                 // Calculate cost
                 const inputCost = (inputTokens / 1000000) * model.inputCost;
                 const outputCost = (outputTokens / 1000000) * model.outputCost;
                 const totalCost = inputCost + outputCost;
 
+                console.log(`💰 [${modelId}] Cost breakdown:`, { inputCost: `$${inputCost.toFixed(6)}`, outputCost: `$${outputCost.toFixed(6)}`, totalCost: `$${totalCost.toFixed(6)}` });
+
                 // Parse the response
                 let parsedResponse;
                 const content = data.choices[0]?.message?.content || '';
+                console.log(`📝 [${modelId}] Raw content:`, content);
+
                 try {
                     // Try to extract JSON from the response
                     const jsonMatch = content.match(/\{[\s\S]*\}/);
                     if (jsonMatch) {
                         parsedResponse = JSON.parse(jsonMatch[0]);
+                        console.log(`✅ [${modelId}] Parsed JSON successfully`);
                     } else {
+                        console.warn(`⚠️ [${modelId}] No JSON found in response, using raw content`);
                         parsedResponse = { raw_response: content };
                     }
                 } catch (e) {
+                    console.warn(`⚠️ [${modelId}] Failed to parse JSON:`, e.message);
                     parsedResponse = { raw_response: content };
                 }
+
+                console.log(`🏁 [${modelId}] Completed in ${duration.toFixed(2)}s`);
 
                 return {
                     success: true,
@@ -936,10 +996,14 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
 
             } catch (error) {
                 const endTime = performance.now();
+                const duration = (endTime - startTime) / 1000;
+                console.error(`❌ [${modelId}] Request failed after ${duration.toFixed(2)}s:`, error.message);
+                console.error(`❌ [${modelId}] Full error:`, error);
+
                 return {
                     success: false,
                     modelId,
-                    duration: (endTime - startTime) / 1000,
+                    duration,
                     error: error.message
                 };
             }
