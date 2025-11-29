@@ -939,6 +939,9 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
             }, REQUEST_TIMEOUT);
 
             try {
+                // GPT-5 models use max_completion_tokens, older models use max_tokens
+                const isGPT5 = modelId.startsWith('gpt-5');
+
                 const requestBody = {
                     model: modelId,
                     messages: [
@@ -959,7 +962,7 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
                             ]
                         }
                     ],
-                    max_tokens: 1000
+                    ...(isGPT5 ? { max_completion_tokens: 1000 } : { max_tokens: 1000 })
                 };
 
                 console.log(`📤 [${modelId}] Request payload size:`, JSON.stringify(requestBody).length, 'bytes');
