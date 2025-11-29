@@ -685,8 +685,8 @@
             }
         };
 
-        // Request timeout in milliseconds (30 seconds)
-        const REQUEST_TIMEOUT = 30000;
+        // Request timeout in milliseconds (120 seconds for large images)
+        const REQUEST_TIMEOUT = 120000;
 
         // The prompt for rock identification
         const ROCK_IDENTIFICATION_PROMPT = `Analyze this image and identify what it shows. Determine if it is a rock, mineral, gem, or fossil.
@@ -761,18 +761,58 @@ Important: Return ONLY the JSON object, no additional text or markdown formattin
             console.log('📁 [IMAGE] File size:', (file.size / 1024).toFixed(1), 'KB');
 
             currentImageSize = file.size;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                currentImageBase64 = e.target.result;
-                console.log('✅ [IMAGE] File loaded successfully');
+
+            // Compress large images for faster uploads
+            const MAX_SIZE = 1024; // Max dimension in pixels
+            const QUALITY = 0.8;   // JPEG quality
+
+            const img = new Image();
+            img.onload = () => {
+                let width = img.width;
+                let height = img.height;
+
+                // Resize if too large
+                if (width > MAX_SIZE || height > MAX_SIZE) {
+                    if (width > height) {
+                        height = Math.round((height * MAX_SIZE) / width);
+                        width = MAX_SIZE;
+                    } else {
+                        width = Math.round((width * MAX_SIZE) / height);
+                        height = MAX_SIZE;
+                    }
+                    console.log(`🔄 [IMAGE] Resizing from ${img.width}x${img.height} to ${width}x${height}`);
+                }
+
+                // Draw to canvas and compress
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+
+                currentImageBase64 = canvas.toDataURL('image/jpeg', QUALITY);
+                const compressedSize = Math.round((currentImageBase64.length * 3) / 4 / 1024);
+
+                console.log('✅ [IMAGE] File compressed successfully');
+                console.log('📁 [IMAGE] Compressed size:', compressedSize, 'KB');
                 console.log('📁 [IMAGE] Base64 length:', currentImageBase64.length, 'characters');
+
                 imagePreview.src = currentImageBase64;
                 previewContainer.classList.add('show');
-                imageInfo.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+                imageInfo.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB → ${compressedSize} KB compressed)`;
                 updateButtonState();
             };
+            img.onerror = (e) => {
+                console.error('❌ [IMAGE] Error loading image:', e);
+            };
+
+            // Load image from file
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                img.src = e.target.result;
+            };
             reader.onerror = (e) => {
-                console.error('❌ [IMAGE] Error loading file:', e);
+                console.error('❌ [IMAGE] Error reading file:', e);
             };
             reader.readAsDataURL(file);
         }
